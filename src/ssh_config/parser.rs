@@ -65,10 +65,10 @@ impl Parser {
         let mut line = String::new();
         while reader.read_line(&mut line)? > 0 {
             // We separate parts that contain comments with #
-            line = if line.contains('#') {
+            line = if line.contains('#') && !line.trim().starts_with("#!") {
                 line.split('#').next().unwrap().to_string()
             } else {
-                line.trim().to_string()
+                line.replace("#!", "").trim().to_string()
             };
 
             if line.is_empty() || line.starts_with('#') {

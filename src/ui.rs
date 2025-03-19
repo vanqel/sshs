@@ -111,6 +111,7 @@ impl App {
                         || matcher
                             .fuzzy_match(&host.destination, search_value)
                             .is_some()
+                        || matcher.fuzzy_match(&host.description, search_value).is_some()
                         || matcher.fuzzy_match(&host.aliases, search_value).is_some()
                 },
             ),
@@ -307,6 +308,15 @@ impl App {
             .unwrap_or(0);
         lengths.push(name_len);
 
+        let description_len = self
+            .hosts
+            .iter()
+            .map(|d| d.description.as_str())
+            .map(UnicodeWidthStr::width)
+            .max()
+            .unwrap_or(0);
+        lengths.push(description_len);
+
         let aliases_len = self
             .hosts
             .non_filtered_iter()
@@ -449,7 +459,7 @@ fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
     let header_style = Style::default().fg(tailwind::CYAN.c500);
     let selected_style = Style::default().add_modifier(Modifier::REVERSED);
 
-    let mut header_names = vec!["Name", "Aliases", "User", "Destination", "Port"];
+    let mut header_names = vec!["Name", "Aliases", "Description", "User", "Destination", "Port"];
     if app.config.show_proxy_command {
         header_names.push("Proxy");
     }
@@ -466,6 +476,7 @@ fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
         let mut content = vec![
             host.name.clone(),
             host.aliases.clone(),
+            host.description.clone(),
             host.user.clone().unwrap_or_default(),
             host.destination.clone(),
             host.port.clone().unwrap_or_default(),

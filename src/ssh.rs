@@ -11,8 +11,10 @@ use crate::ssh_config::{self, parser_error::ParseError, HostVecExt};
 pub struct Host {
     pub name: String,
     pub aliases: String,
+    pub description: String,
     pub user: Option<String>,
     pub destination: String,
+    pub password: Option<String>,
     pub port: Option<String>,
     pub proxy_command: Option<String>,
 }
@@ -86,7 +88,13 @@ pub fn parse_config(raw_path: &String) -> Result<Vec<Host>, ParseConfigError> {
                 .unwrap_or(&String::new())
                 .clone(),
             aliases: host.get_patterns().iter().skip(1).join(", "),
+            description: host
+                .get(&ssh_config::EntryType::Description)
+                .unwrap_or_default(),
             user: host.get(&ssh_config::EntryType::User),
+            password: host
+                .get(&ssh_config::EntryType::Password)
+            ,
             destination: host
                 .get(&ssh_config::EntryType::Hostname)
                 .unwrap_or_default(),

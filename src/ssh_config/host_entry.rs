@@ -107,4 +107,6 @@ pub enum EntryType {
     VerifyHostKeyDNS,
     VisualHostKey,
     XAuthLocation,
+    Description,
+    Password
 }
