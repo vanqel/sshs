@@ -37,6 +37,9 @@ struct Args {
     /// Handlebars template of the command to execute
     #[arg(short, long, default_value = "sshpass -p \"{{{password}}}\" ssh \"{{{name}}}\"")]
     template: String,
+    /// Handlebars template of the command to execute
+    #[arg(short, long, default_value = "ssh \"{{{name}}}\"")]
+    pass_connect: String,
 
     /// Handlebars template of the command to execute when an SSH session starts
     #[arg(long, value_name = "TEMPLATE")]
@@ -60,6 +63,7 @@ fn main() -> Result<()> {
         sort_by_name: args.sort,
         show_proxy_command: args.show_proxy_command,
         command_template: args.template,
+        command_template_no_password: args.pass_connect,
         command_template_on_session_start: args.on_session_start_template,
         command_template_on_session_end: args.on_session_end_template,
         exit_after_ssh_session_ends: args.exit,

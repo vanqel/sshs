@@ -38,6 +38,7 @@ pub struct AppConfig {
     pub command_template_on_session_start: Option<String>,
     pub command_template_on_session_end: Option<String>,
     pub exit_after_ssh_session_ends: bool,
+    pub command_template_no_password: String,
 }
 
 pub struct App {
@@ -109,8 +110,8 @@ impl App {
                     search_value.is_empty()
                         || matcher.fuzzy_match(&host.name, search_value).is_some()
                         || matcher
-                            .fuzzy_match(&host.destination, search_value)
-                            .is_some()
+                        .fuzzy_match(&host.destination, search_value)
+                        .is_some()
                         || matcher.fuzzy_match(&host.description, search_value).is_some()
                         || matcher.fuzzy_match(&host.aliases, search_value).is_some()
                 },
@@ -230,7 +231,7 @@ impl App {
                     host.run_command_template(template)?;
                 }
 
-                host.run_command_template(&self.config.command_template)?;
+                host.run_connect_command_template(&self.config.command_template, &self.config.command_template_no_password)?;
 
                 if let Some(template) = &self.config.command_template_on_session_end {
                     host.run_command_template(template)?;
@@ -429,7 +430,7 @@ fn ui(f: &mut Frame, app: &mut App) {
         Constraint::Min(5),
         Constraint::Length(3),
     ])
-    .split(f.area());
+        .split(f.area());
 
     render_searchbar(f, app, rects[0]);
 

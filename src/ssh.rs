@@ -30,11 +30,39 @@ impl Host {
     ///
     /// Will panic if the regex cannot be compiled.
     pub fn run_command_template(&self, pattern: &str) -> anyhow::Result<()> {
+        let rendered_command;
+
         let handlebars = Handlebars::new();
-        let rendered_command = handlebars.render_template(pattern, &self)?;
+        rendered_command = handlebars.render_template(pattern, &self)?;
 
         println!("Running command: {rendered_command}");
+        let mut args = shlex::split(&rendered_command)
+            .ok_or(anyhow!("Failed to parse command: {rendered_command}"))?
+            .into_iter()
+            .collect::<VecDeque<String>>();
+        let command = args.pop_front().ok_or(anyhow!("Failed to get command"))?;
 
+        let status = Command::new(command).args(args).spawn()?.wait()?;
+        if !status.success() {
+            std::process::exit(status.code().unwrap_or(1));
+        }
+
+        Ok(())
+    }
+
+
+    pub fn run_connect_command_template(&self, pattern: &str, pattern_no_password: &str) -> anyhow::Result<()> {
+        let rendered_command;
+
+        if self.password.is_none() {
+            let handlebars = Handlebars::new();
+            rendered_command = handlebars.render_template(pattern_no_password, &self)?;
+        } else {
+            let handlebars = Handlebars::new();
+            rendered_command = handlebars.render_template(pattern, &self)?;
+        };
+
+        println!("Running command: {rendered_command}");
         let mut args = shlex::split(&rendered_command)
             .ok_or(anyhow!("Failed to parse command: {rendered_command}"))?
             .into_iter()
