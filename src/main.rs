@@ -2,6 +2,7 @@ pub mod searchable;
 pub mod ssh;
 pub mod ssh_config;
 pub mod ui;
+mod keystore;
 
 use anyhow::Result;
 use clap::Parser;
@@ -22,6 +23,18 @@ struct Args {
     )]
     config: Vec<String>,
 
+
+    /// Path to the SSH configuration file
+    #[arg(
+        short,
+        long,
+        num_args = 1..,
+        default_values_t = [
+            "/etc/ssh/ssh_keystore_config".to_string(),
+            "~/.ssh/config_keystore".to_string(),
+        ],
+    )]
+    config_keystore: Vec<String>,
     /// Shows `ProxyCommand`
     #[arg(long, default_value_t = false)]
     show_proxy_command: bool,

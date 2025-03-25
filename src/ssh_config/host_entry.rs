@@ -108,5 +108,6 @@ pub enum EntryType {
     VisualHostKey,
     XAuthLocation,
     Description,
+    Project,
     Password
 }

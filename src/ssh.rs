@@ -1,3 +1,5 @@
+use crate::keystore:: {self, key_parser_error::KeyParseError, KeysVecExt};
+use crate::ssh_config::{self, parser_error::ParseError, HostVecExt};
 use anyhow::anyhow;
 use handlebars::Handlebars;
 use itertools::Itertools;
@@ -5,13 +7,12 @@ use serde::Serialize;
 use std::collections::VecDeque;
 use std::process::Command;
 
-use crate::ssh_config::{self, parser_error::ParseError, HostVecExt};
-
 #[derive(Debug, Serialize, Clone)]
 pub struct Host {
     pub name: String,
     pub aliases: String,
     pub description: String,
+    pub project: String,
     pub user: Option<String>,
     pub destination: String,
     pub password: Option<String>,
@@ -118,6 +119,9 @@ pub fn parse_config(raw_path: &String) -> Result<Vec<Host>, ParseConfigError> {
             aliases: host.get_patterns().iter().skip(1).join(", "),
             description: host
                 .get(&ssh_config::EntryType::Description)
+                .unwrap_or_default(),
+            project: host
+                .get(&ssh_config::EntryType::Project)
                 .unwrap_or_default(),
             user: host.get(&ssh_config::EntryType::User),
             password: host

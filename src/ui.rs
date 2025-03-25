@@ -22,6 +22,7 @@ use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 use unicode_width::UnicodeWidthStr;
 
+use crate::keystore::EntryType::{Host, Password};
 use crate::{searchable::Searchable, ssh};
 
 const INFO_TEXT: &str = "(Esc) quit | (↑) move up | (↓) move down | (enter) select";
@@ -29,7 +30,7 @@ const INFO_TEXT: &str = "(Esc) quit | (↑) move up | (↓) move down | (enter) 
 #[derive(Clone)]
 pub struct AppConfig {
     pub config_paths: Vec<String>,
-
+    pub key_paths: Vec<String>,
     pub search_filter: Option<String>,
     pub sort_by_name: bool,
     pub show_proxy_command: bool,
@@ -48,6 +49,7 @@ pub struct App {
 
     table_state: TableState,
     hosts: Searchable<ssh::Host>,
+
     table_columns_constraints: Vec<Constraint>,
 
     palette: tailwind::Palette,
@@ -108,12 +110,11 @@ impl App {
                 &search_input,
                 move |host: &&ssh::Host, search_value: &str| -> bool {
                     search_value.is_empty()
-                        || matcher.fuzzy_match(&host.name, search_value).is_some()
-                        || matcher
-                        .fuzzy_match(&host.destination, search_value)
-                        .is_some()
-                        || matcher.fuzzy_match(&host.description, search_value).is_some()
-                        || matcher.fuzzy_match(&host.aliases, search_value).is_some()
+                        || matcher.fuzzy_match(&host.name.to_lowercase(), &*search_value.to_lowercase()).is_some()
+                        || matcher.fuzzy_match(&host.destination.to_lowercase(), &*search_value.to_lowercase()).is_some()
+                        || matcher.fuzzy_match(&host.description.to_lowercase(), &*search_value.to_lowercase()).is_some()
+                        || matcher.fuzzy_match(&host.project.to_lowercase(), &*search_value.to_lowercase()).is_some()
+                        || matcher.fuzzy_match(&host.aliases.to_lowercase(), &*search_value.to_lowercase()).is_some()
                 },
             ),
         };
@@ -318,6 +319,15 @@ impl App {
             .unwrap_or(0);
         lengths.push(description_len);
 
+        let project_len = self
+            .hosts
+            .iter()
+            .map(|d| d.project.as_str())
+            .map(UnicodeWidthStr::width)
+            .max()
+            .unwrap_or(0);
+        lengths.push(project_len);
+
         let aliases_len = self
             .hosts
             .non_filtered_iter()
@@ -457,10 +467,10 @@ fn render_searchbar(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
-    let header_style = Style::default().fg(tailwind::CYAN.c500);
+    let header_style = Style::default().fg(tailwind::INDIGO.c500);
     let selected_style = Style::default().add_modifier(Modifier::REVERSED);
 
-    let mut header_names = vec!["Name", "Aliases", "Description", "User", "Destination", "Port"];
+    let mut header_names = vec!["Name", "Project", "Description", "User", "Destination", "Port"];
     if app.config.show_proxy_command {
         header_names.push("Proxy");
     }
@@ -476,7 +486,7 @@ fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
     let rows = app.hosts.iter().map(|host| {
         let mut content = vec![
             host.name.clone(),
-            host.aliases.clone(),
+            host.project.clone(),
             host.description.clone(),
             host.user.clone().unwrap_or_default(),
             host.destination.clone(),
