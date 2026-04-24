@@ -4,7 +4,6 @@ use std::io::BufRead;
 use std::io::BufReader;
 use std::path::Path;
 use std::str::FromStr;
-
 use super::host::Entry;
 use super::parser_error::InvalidIncludeError;
 use super::parser_error::InvalidIncludeErrorDetails;
@@ -91,7 +90,8 @@ impl Parser {
                 }
                 EntryType::Host => {
                     let patterns = parse_patterns(&entry.1);
-                    hosts.push(Host::new(patterns));
+                    let new_host = Host::new(patterns);
+                    hosts.push(new_host);
                     is_in_host_block = true;
 
                     continue;

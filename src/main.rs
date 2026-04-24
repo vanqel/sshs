@@ -2,7 +2,6 @@ pub mod searchable;
 pub mod ssh;
 pub mod ssh_config;
 pub mod ui;
-mod keystore;
 
 use anyhow::Result;
 use clap::Parser;
@@ -23,18 +22,19 @@ struct Args {
     )]
     config: Vec<String>,
 
-
     /// Path to the SSH configuration file
     #[arg(
         short,
         long,
         num_args = 1..,
         default_values_t = [
-            "/etc/ssh/ssh_keystore_config".to_string(),
-            "~/.ssh/config_keystore".to_string(),
+            "/etc/ssh/ssh_config.d".to_string(),
+            "~/.ssh/config.d".to_string(),
         ],
     )]
-    config_keystore: Vec<String>,
+    folder: Vec<String>,
+
+
     /// Shows `ProxyCommand`
     #[arg(long, default_value_t = false)]
     show_proxy_command: bool,
@@ -53,6 +53,16 @@ struct Args {
     /// Handlebars template of the command to execute
     #[arg(short, long, default_value = "ssh \"{{{name}}}\"")]
     pass_connect: String,
+
+
+
+    /// Handlebars template of the command to execute
+    #[arg(short, long,  default_value = "sshpass -p \"{{{password}}}\" scp  \"{{{source}}}\" \"{{{name}}}\": \"{{{destination}}}\"")]
+    ssp_pass_template_scp: String,
+    /// Handlebars template of the command to execute
+    #[arg(short, long, default_value = "ssh \"{{{name}}}\"")]
+    pass_connect: String,
+
 
     /// Handlebars template of the command to execute when an SSH session starts
     #[arg(long, value_name = "TEMPLATE")]
@@ -73,6 +83,7 @@ fn main() -> Result<()> {
     let mut app = App::new(&AppConfig {
         config_paths: args.config,
         search_filter: args.search,
+        config_folder: args.folder,
         sort_by_name: args.sort,
         show_proxy_command: args.show_proxy_command,
         command_template: args.template,

@@ -1,4 +1,3 @@
-use crate::keystore:: {self, key_parser_error::KeyParseError, KeysVecExt};
 use crate::ssh_config::{self, parser_error::ParseError, HostVecExt};
 use anyhow::anyhow;
 use handlebars::Handlebars;

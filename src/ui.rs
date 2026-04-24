@@ -11,18 +11,19 @@ use crossterm::{
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 #[allow(clippy::wildcard_imports)]
 use ratatui::{prelude::*, widgets::*};
+use std::process::Command;
 use std::{
     cell::RefCell,
     cmp::{max, min},
     io,
     rc::Rc,
 };
+use ratatui::style::palette::tailwind::Palette;
 use style::palette::tailwind;
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 use unicode_width::UnicodeWidthStr;
 
-use crate::keystore::EntryType::{Host, Password};
 use crate::{searchable::Searchable, ssh};
 
 const INFO_TEXT: &str = "(Esc) quit | (↑) move up | (↓) move down | (enter) select";
@@ -30,7 +31,7 @@ const INFO_TEXT: &str = "(Esc) quit | (↑) move up | (↓) move down | (enter) 
 #[derive(Clone)]
 pub struct AppConfig {
     pub config_paths: Vec<String>,
-    pub key_paths: Vec<String>,
+    pub config_folder: Vec<String>,
     pub search_filter: Option<String>,
     pub sort_by_name: bool,
     pub show_proxy_command: bool,
@@ -68,20 +69,31 @@ impl App {
     /// Will return `Err` if the SSH configuration file cannot be parsed.
     pub fn new(config: &AppConfig) -> Result<App> {
         let mut hosts = Vec::new();
+        
+        let output = Command::new("find")
+            .args(&[
+                config.config_folder.first().unwrap(),
+                "-name",
+                "*config",
+                "-type",
+                "f",
+            ])
+            .output()
+            .expect("failed to execute process");
 
-        for path in &config.config_paths {
-            let parsed_hosts = match ssh::parse_config(path) {
+        let mut paths: Vec<String> = String::from_utf8(output.stdout)?
+            .lines()
+            .map(|line| line.to_string())
+            .collect();
+        
+        paths.push(config.config_paths.get(0).unwrap().to_string());
+
+        println!("{:?}", paths);
+        
+        for path in paths {
+            let parsed_hosts = match ssh::parse_config(&path) {
                 Ok(hosts) => hosts,
                 Err(err) => {
-                    if path == "/etc/ssh/ssh_config" {
-                        if let ssh::ParseConfigError::Io(io_err) = &err {
-                            // Ignore missing system-wide SSH configuration file
-                            if io_err.kind() == std::io::ErrorKind::NotFound {
-                                continue;
-                            }
-                        }
-                    }
-
                     anyhow::bail!("Failed to parse SSH configuration file: {err:?}");
                 }
             };
@@ -89,9 +101,9 @@ impl App {
             hosts.extend(parsed_hosts);
         }
 
-        if config.sort_by_name {
-            hosts.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-        }
+        
+       hosts.sort_by(|a, b| a.project.to_lowercase().cmp(&b.project.to_lowercase()).reverse());
+        
 
         let search_input = config.search_filter.clone().unwrap_or_default();
         let matcher = SkimMatcherV2::default();
@@ -103,18 +115,51 @@ impl App {
 
             table_state: TableState::default().with_selected(0),
             table_columns_constraints: Vec::new(),
-            palette: tailwind::BLUE,
-
+            palette: Palette {
+                c50: Color::from_u32(0xe5a01a),
+                c100: Color::from_u32(0xe5a01a),
+                c200: Color::from_u32(0xe5a01a),
+                c300: Color::from_u32(0xe5a01a),
+                c400: Color::from_u32(0x2579D0),
+                c500: Color::from_u32(0x2579D0),
+                c600: Color::from_u32(0xe5a01a),
+                c700: Color::from_u32(0xe5a01a),
+                c800: Color::from_u32(0xe5a01a),
+                c900: Color::from_u32(0xe5a01a),
+                c950: Color::from_u32(0xe5a01a),
+            },
             hosts: Searchable::new(
                 hosts,
                 &search_input,
                 move |host: &&ssh::Host, search_value: &str| -> bool {
                     search_value.is_empty()
-                        || matcher.fuzzy_match(&host.name.to_lowercase(), &*search_value.to_lowercase()).is_some()
-                        || matcher.fuzzy_match(&host.destination.to_lowercase(), &*search_value.to_lowercase()).is_some()
-                        || matcher.fuzzy_match(&host.description.to_lowercase(), &*search_value.to_lowercase()).is_some()
-                        || matcher.fuzzy_match(&host.project.to_lowercase(), &*search_value.to_lowercase()).is_some()
-                        || matcher.fuzzy_match(&host.aliases.to_lowercase(), &*search_value.to_lowercase()).is_some()
+                        || matcher
+                            .fuzzy_match(&host.name.to_lowercase(), &*search_value.to_lowercase())
+                            .is_some()
+                        || matcher
+                            .fuzzy_match(
+                                &host.destination.to_lowercase(),
+                                &*search_value.to_lowercase(),
+                            )
+                            .is_some()
+                        || matcher
+                            .fuzzy_match(
+                                &host.description.to_lowercase(),
+                                &*search_value.to_lowercase(),
+                            )
+                            .is_some()
+                        || matcher
+                            .fuzzy_match(
+                                &host.project.to_lowercase(),
+                                &*search_value.to_lowercase(),
+                            )
+                            .is_some()
+                        || matcher
+                            .fuzzy_match(
+                                &host.aliases.to_lowercase(),
+                                &*search_value.to_lowercase(),
+                            )
+                            .is_some()
                 },
             ),
         };
@@ -218,6 +263,35 @@ impl App {
 
                 self.table_state.select(Some(target));
             }
+            D => {
+                let selected = self.table_state.selected().unwrap_or(0);
+                if selected >= self.hosts.len() {
+                    return Ok(AppKeyAction::Ok);
+                }
+
+                let host: &ssh::Host = &self.hosts[selected];
+
+                restore_terminal(terminal).expect("Failed to restore terminal");
+
+                if let Some(template) = &self.config.command_template_on_session_start {
+                    host.run_command_template(template)?;
+                }
+
+                host.run_connect_command_template(
+                    &self.config.command_template,
+                    &self.config.command_template_no_password,
+                )?;
+
+                if let Some(template) = &self.config.command_template_on_session_end {
+                    host.run_command_template(template)?;
+                }
+
+                setup_terminal(terminal).expect("Failed to setup terminal");
+
+                if self.config.exit_after_ssh_session_ends {
+                    return Ok(AppKeyAction::Stop);
+                }
+            }
             Enter => {
                 let selected = self.table_state.selected().unwrap_or(0);
                 if selected >= self.hosts.len() {
@@ -232,7 +306,10 @@ impl App {
                     host.run_command_template(template)?;
                 }
 
-                host.run_connect_command_template(&self.config.command_template, &self.config.command_template_no_password)?;
+                host.run_connect_command_template(
+                    &self.config.command_template,
+                    &self.config.command_template_no_password,
+                )?;
 
                 if let Some(template) = &self.config.command_template_on_session_end {
                     host.run_command_template(template)?;
@@ -440,7 +517,7 @@ fn ui(f: &mut Frame, app: &mut App) {
         Constraint::Min(5),
         Constraint::Length(3),
     ])
-        .split(f.area());
+    .split(f.area());
 
     render_searchbar(f, app, rects[0]);
 
@@ -467,10 +544,17 @@ fn render_searchbar(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
-    let header_style = Style::default().fg(tailwind::INDIGO.c500);
+    let header_style = Style::default().fg(app.palette.c500);
     let selected_style = Style::default().add_modifier(Modifier::REVERSED);
 
-    let mut header_names = vec!["Name", "Project", "Description", "User", "Destination", "Port"];
+    let mut header_names = vec![
+        "Name",
+        "Project",
+        "Description",
+        "User",
+        "Destination",
+        "Port",
+    ];
     if app.config.show_proxy_command {
         header_names.push("Proxy");
     }
