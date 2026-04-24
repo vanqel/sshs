@@ -1,4 +1,6 @@
+use crate::{searchable::Searchable, ssh};
 use anyhow::Result;
+use crossterm::event::{MouseEvent, MouseEventKind};
 use crossterm::{
     cursor::{Hide, Show},
     event::{
@@ -9,6 +11,8 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
+use itertools::Itertools;
+// provides the `random` method
 #[allow(clippy::wildcard_imports)]
 use ratatui::{prelude::*, widgets::*};
 use std::{
@@ -21,8 +25,6 @@ use style::palette::tailwind;
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 use unicode_width::UnicodeWidthStr;
-
-use crate::{searchable::Searchable, ssh};
 
 const INFO_TEXT: &str = "(Esc) quit | (↑) move up | (↓) move down | (enter) select";
 
@@ -51,6 +53,7 @@ pub struct App {
     table_columns_constraints: Vec<Constraint>,
 
     palette: tailwind::Palette,
+    tick: u64,
 }
 
 #[derive(PartialEq)]
@@ -96,7 +99,7 @@ impl App {
 
         let mut app = App {
             config: config.clone(),
-
+            tick: 0,
             search: search_input.clone().into(),
 
             table_state: TableState::default().with_selected(0),
@@ -110,9 +113,11 @@ impl App {
                     search_value.is_empty()
                         || matcher.fuzzy_match(&host.name, search_value).is_some()
                         || matcher
-                        .fuzzy_match(&host.destination, search_value)
-                        .is_some()
-                        || matcher.fuzzy_match(&host.description, search_value).is_some()
+                            .fuzzy_match(&host.destination, search_value)
+                            .is_some()
+                        || matcher
+                            .fuzzy_match(&host.description, search_value)
+                            .is_some()
                         || matcher.fuzzy_match(&host.aliases, search_value).is_some()
                 },
             ),
@@ -148,10 +153,27 @@ impl App {
     where
         B: Backend + std::io::Write,
     {
+        
         loop {
             terminal.borrow_mut().draw(|f| ui(f, self))?;
 
             let ev = event::read()?;
+            
+            self.tick += 1;
+
+            if self.tick > 100 {
+                self.tick = 0;
+            }
+
+            if let Event::Mouse(mouse) = ev {
+                if self.tick % 3 != 0 {
+                    continue;
+                }
+                let action = self.on_key_press_mouse(mouse)?;
+                if action == AppKeyAction::Ok {
+                    continue;
+                }
+            }
 
             if let Event::Key(key) = ev {
                 if key.kind == KeyEventKind::Press {
@@ -179,6 +201,18 @@ impl App {
         Ok(())
     }
 
+    fn on_key_press_mouse(&mut self, key: MouseEvent) -> Result<AppKeyAction> {
+        #[allow(clippy::enum_glob_use)]
+        use MouseEventKind::*;
+
+        match key.kind {
+            ScrollUp => self.next(),
+            ScrollDown => self.previous(),
+            _ => return Ok(AppKeyAction::Continue),
+        }
+
+        Ok(AppKeyAction::Ok)
+    }
     fn on_key_press<B>(
         &mut self,
         terminal: &Rc<RefCell<Terminal<B>>>,
@@ -231,7 +265,10 @@ impl App {
                     host.run_command_template(template)?;
                 }
 
-                host.run_connect_command_template(&self.config.command_template, &self.config.command_template_no_password)?;
+                host.run_connect_command_template(
+                    &self.config.command_template,
+                    &self.config.command_template_no_password,
+                )?;
 
                 if let Some(template) = &self.config.command_template_on_session_end {
                     host.run_command_template(template)?;
@@ -430,7 +467,7 @@ fn ui(f: &mut Frame, app: &mut App) {
         Constraint::Min(5),
         Constraint::Length(3),
     ])
-        .split(f.area());
+    .split(f.area());
 
     render_searchbar(f, app, rects[0]);
 
@@ -460,7 +497,14 @@ fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
     let header_style = Style::default().fg(tailwind::CYAN.c500);
     let selected_style = Style::default().add_modifier(Modifier::REVERSED);
 
-    let mut header_names = vec!["Name", "Aliases", "Description", "User", "Destination", "Port"];
+    let mut header_names = vec![
+        "Name",
+        "Aliases",
+        "Description",
+        "User",
+        "Destination",
+        "Port",
+    ];
     if app.config.show_proxy_command {
         header_names.push("Proxy");
     }
