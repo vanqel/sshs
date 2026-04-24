@@ -2,6 +2,7 @@ pub mod searchable;
 pub mod ssh;
 pub mod ssh_config;
 pub mod ui;
+mod keychain;
 
 use anyhow::Result;
 use clap::Parser;
@@ -51,7 +52,7 @@ struct Args {
 
     /// Exit after ending the SSH session
     #[arg(short, long, default_value_t = false)]
-    exit: bool,
+    exit: bool
 }
 
 fn main() -> Result<()> {

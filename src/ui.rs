@@ -13,6 +13,7 @@ use crossterm::{
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use itertools::Itertools;
 // provides the `random` method
+use crate::keychain::remove_from_keychain;
 #[allow(clippy::wildcard_imports)]
 use ratatui::{prelude::*, widgets::*};
 use std::{
@@ -20,13 +21,14 @@ use std::{
     cmp::{max, min},
     io,
     rc::Rc,
+    result,
 };
 use style::palette::tailwind;
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 use unicode_width::UnicodeWidthStr;
 
-const INFO_TEXT: &str = "(Esc) quit | (↑) move up | (↓) move down | (enter) select";
+const INFO_TEXT: &str = "(Esc) quit | (↑) move up | (↓) move down | (enter) select | (SHIFT+D) remove password from keychain ";
 
 #[derive(Clone)]
 pub struct AppConfig {
@@ -153,12 +155,11 @@ impl App {
     where
         B: Backend + std::io::Write,
     {
-        
         loop {
             terminal.borrow_mut().draw(|f| ui(f, self))?;
 
             let ev = event::read()?;
-            
+
             self.tick += 1;
 
             if self.tick > 100 {
@@ -225,11 +226,22 @@ impl App {
         use KeyCode::*;
 
         let is_ctrl_pressed = key.modifiers.contains(KeyModifiers::CONTROL);
+        let is_shift_pressed = key.modifiers.contains(KeyModifiers::SHIFT);
 
         if is_ctrl_pressed {
             let action = self.on_key_press_ctrl(key);
+
             if action != AppKeyAction::Continue {
                 return Ok(action);
+            }
+        }
+
+        if is_shift_pressed {
+            if key.code == Char('D') || key.code == Char('d') {
+                let selected = self.table_state.selected().unwrap_or(0);
+                let host: &ssh::Host = &self.hosts[selected];
+                let result = remove_from_keychain(host.name.as_str());
+                return Ok(AppKeyAction::Continue);
             }
         }
 
@@ -253,6 +265,7 @@ impl App {
             }
             Enter => {
                 let selected = self.table_state.selected().unwrap_or(0);
+
                 if selected >= self.hosts.len() {
                     return Ok(AppKeyAction::Ok);
                 }
@@ -262,16 +275,13 @@ impl App {
                 restore_terminal(terminal).expect("Failed to restore terminal");
 
                 if let Some(template) = &self.config.command_template_on_session_start {
-                    host.run_command_template(template)?;
+                    host.run_command_template(template.as_str())?;
                 }
 
-                host.run_connect_command_template(
-                    &self.config.command_template,
-                    &self.config.command_template_no_password,
-                )?;
+                host.run_connect_command_template()?;
 
                 if let Some(template) = &self.config.command_template_on_session_end {
-                    host.run_command_template(template)?;
+                    host.run_command_template(template.as_str())?;
                 }
 
                 setup_terminal(terminal).expect("Failed to setup terminal");
