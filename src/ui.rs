@@ -1,5 +1,5 @@
 // provides the `random` method
-use crate::docker_containers::{resolve_json_docker_containers, Container};
+use crate::docker_containers::{render_docker_table, resolve_json_docker_containers, Container};
 use crate::keychain::remove_from_keychain;
 use crate::{searchable::Searchable, ssh};
 use anyhow::Result;
@@ -24,15 +24,16 @@ use std::{
     cell::RefCell,
     cmp::{max, min},
     io,
-    rc::Rc
-    ,
+    rc::Rc,
 };
+use strum_macros::Display;
 use style::palette::tailwind;
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 use unicode_width::UnicodeWidthStr;
 
-const INFO_TEXT: &str = "(Esc) quit | (↑) move up | (↓) move down | (enter) select | (SHIFT+D) remove password from keychain  | (SHIFT+C) resolve docker containers";
+const INFO_TEXT: &str = "(Esc) quit | (↑) move up | (↓) move down | (enter) select | (SHIFT+D) remove password from keychain  | (SHIFT+C) resolve docker containers \
+| (Tab) Switch state | (SHIFT+T) Enable/Disable docker table";
 const CONTAINERS_INFO: &str = "docker ps --format json";
 
 #[derive(Clone)]
@@ -49,20 +50,26 @@ pub struct AppConfig {
     pub exit_after_ssh_session_ends: bool,
     pub command_template_no_password: String,
 }
-
+#[derive(Display)]
+pub enum StateActive {
+    DOCKER,
+    HOSTS,
+}
 pub struct App {
     config: AppConfig,
 
     search: Input,
 
-    table_state_hosts: TableState,
-    table_state_containers: TableState,
-    hosts: Searchable<ssh::Host>,
-    docker_containers: HashMap<ssh::Host, Vec<Container>>,
-    table_columns_constraints: Vec<Constraint>,
+    pub table_state_hosts: TableState,
+    pub table_state_containers: TableState,
+    pub active_state: StateActive,
+    pub enabled_docker_table: bool,
+    pub hosts: Searchable<ssh::Host>,
+    pub docker_containers: HashMap<ssh::Host, Vec<Container>>,
+    pub table_columns_constraints: Vec<Constraint>,
 
-    palette: tailwind::Palette,
-    tick: u64,
+    pub palette: tailwind::Palette,
+    pub tick: u64,
 }
 
 #[derive(PartialEq)]
@@ -113,6 +120,8 @@ impl App {
 
             table_state_hosts: TableState::default().with_selected(0),
             table_state_containers: TableState::default().with_selected(0),
+            enabled_docker_table: false,
+            active_state: StateActive::HOSTS,
             table_columns_constraints: Vec::new(),
             palette: tailwind::BLUE,
             docker_containers: HashMap::new(),
@@ -214,9 +223,14 @@ impl App {
         #[allow(clippy::enum_glob_use)]
         use MouseEventKind::*;
 
+        let active_table_state = match self.active_state {
+            StateActive::DOCKER => &mut self.table_state_containers,
+            StateActive::HOSTS => &mut self.table_state_hosts,
+        };
+
         match key.kind {
-            ScrollUp => self.next(),
-            ScrollDown => self.previous(),
+            ScrollUp => active_table_state.select_next(),
+            ScrollDown => active_table_state.select_previous(),
             _ => return Ok(AppKeyAction::Continue),
         }
 
@@ -233,26 +247,29 @@ impl App {
         #[allow(clippy::enum_glob_use)]
         use KeyCode::*;
 
-        let is_ctrl_pressed = key.modifiers.contains(KeyModifiers::CONTROL);
+        let active_table_state = match self.active_state {
+            StateActive::DOCKER => &mut self.table_state_containers,
+            StateActive::HOSTS => &mut self.table_state_hosts,
+        };
+
         let is_shift_pressed = key.modifiers.contains(KeyModifiers::SHIFT);
-
-        if is_ctrl_pressed {
-            let action = self.on_key_press_ctrl(key);
-
-            if action != AppKeyAction::Continue {
-                return Ok(action);
-            }
-        }
 
         if is_shift_pressed {
             if key.code == Char('D') || key.code == Char('d') {
-                let selected = self.table_state_hosts.selected().unwrap_or(0);
+                let selected = active_table_state.selected().unwrap_or(0);
                 let host: &ssh::Host = &self.hosts[selected];
                 let result = remove_from_keychain(host.name.as_str());
                 return Ok(AppKeyAction::Ok);
             }
 
+            if key.code == Char('T') || key.code == Char('t') {
+                self.enabled_docker_table = !self.enabled_docker_table;
+                return Ok(AppKeyAction::Ok);
+            }
+
             if key.code == Char('C') || key.code == Char('c') {
+                self.enabled_docker_table = true;
+
                 let selected = self.table_state_hosts.selected().unwrap_or(0);
                 let host: ssh::Host = self.hosts[selected].clone();
 
@@ -269,7 +286,7 @@ impl App {
                         return Ok(AppKeyAction::Continue);
                     }
                     let cont = arr_containers.unwrap();
-                    
+
                     self.docker_containers.insert(host, cont);
                 }
                 return Ok(AppKeyAction::Ok);
@@ -277,22 +294,32 @@ impl App {
         }
 
         match key.code {
+            Tab => match self.active_state {
+                StateActive::DOCKER => {
+                    self.active_state = StateActive::HOSTS;
+                }
+                StateActive::HOSTS => {
+                    if self.enabled_docker_table {
+                        self.active_state = StateActive::DOCKER;
+                    }
+                }
+            },
             Esc => return Ok(AppKeyAction::Stop),
-            Down => self.next(),
-            Up => self.previous(),
-            Home => self.table_state_hosts.select(Some(0)),
-            End => self.table_state_hosts.select(Some(self.hosts.len() - 1)),
+            Down => active_table_state.select_next(),
+            Up => active_table_state.select_previous(),
+            Home => active_table_state.select(Some(0)),
+            End => active_table_state.select(Some(self.hosts.len() - 1)),
             PageDown => {
-                let i = self.table_state_hosts.selected().unwrap_or(0);
+                let i = active_table_state.selected().unwrap_or(0);
                 let target = min(i.saturating_add(21), self.hosts.len() - 1);
 
-                self.table_state_hosts.select(Some(target));
+                active_table_state.select(Some(target));
             }
             PageUp => {
-                let i = self.table_state_hosts.selected().unwrap_or(0);
+                let i = active_table_state.selected().unwrap_or(0);
                 let target = max(i.saturating_sub(21), 0);
 
-                self.table_state_hosts.select(Some(target));
+                active_table_state.select(Some(target));
             }
             Enter => {
                 let selected = self.table_state_hosts.selected().unwrap_or(0);
@@ -503,22 +530,40 @@ where
 }
 
 fn ui(f: &mut Frame, app: &mut App) {
-    let rects = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Min(5),
-        Constraint::Min(1),
-        Constraint::Length(3),
-    ])
-    .split(f.area());
+    let layout = if app.enabled_docker_table {
+        let layout_docker = Layout::vertical([
+            Constraint::Length(3),
+            Constraint::Min(5),
+            Constraint::Min(2),
+            Constraint::Length(3),
+        ])
+        .split(f.area());
 
-    render_searchbar(f, app, rects[0]);
+        render_searchbar(f, app, layout_docker[0]);
 
-    render_table(f, app, rects[1]);
-    render_docker_table(f, app, rects[2]);
+        render_table(f, app, layout_docker[1]);
+        render_docker_table(f, app, layout_docker[2]);
 
-    render_footer(f, app, rects[3]);
+        render_footer(f, app, layout_docker[3]);
+        layout_docker
+    } else {
+        let layout_no_docker = Layout::vertical([
+            Constraint::Length(3),
+            Constraint::Min(5),
+            Constraint::Length(3),
+        ])
+        .split(f.area());
 
-    let mut cursor_position = rects[0].as_position();
+        render_searchbar(f, app, layout_no_docker[0]);
+
+        render_table(f, app, layout_no_docker[1]);
+
+        render_footer(f, app, layout_no_docker[2]);
+
+        layout_no_docker
+    };
+
+    let mut cursor_position = layout[0].as_position();
     cursor_position.x += u16::try_from(app.search.cursor()).unwrap_or_default() + 4;
     cursor_position.y += 1;
 
@@ -600,86 +645,14 @@ fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_stateful_widget(t, area, &mut app.table_state_hosts);
 }
 
-fn render_docker_table(f: &mut Frame, app: &mut App, area: Rect) {
-    let header_style = Style::default().fg(tailwind::CYAN.c500);
-    let selected_style = Style::default().add_modifier(Modifier::REVERSED);
-
-    let mut header_names = vec![
-        "Names",
-        "Ports",
-        "Image",
-        "CreatedAt",
-        "RunningFor",
-        "Size",
-        "State",
-        "Status",
-    ];
-
-    let header = header_names
-        .iter()
-        .copied()
-        .map(Cell::from)
-        .collect::<Row>()
-        .style(header_style)
-        .height(1);
-
-    let bar = " █ ";
-    let v: &Vec<Container> = &Vec::new();
-
-    if app.hosts.len() == 0 {
-        return;
-    }
-
-    let selected = app.table_state_hosts.selected().unwrap_or(0);
-    let host: ssh::Host = app.hosts[selected].clone();
-    let containers = &app.docker_containers;
-
-    let data = if !containers.contains_key(&host) {
-        v;
-    } else {
-        containers.get(&host);
-    };
-
-    let rows = containers.get(&host).unwrap_or(v).iter().map(|cont| {
-        let mut content = vec![
-            cont.name.clone(),
-            cont.ports.clone(),
-            cont.image.clone(),
-            cont.created_at.clone(),
-            cont.running_for.clone(),
-            cont.size.clone(),
-            cont.state.clone(),
-            cont.status.clone(),
-        ];
-
-        content
-            .iter()
-            .map(|content| Cell::from(Text::from(content.to_string())))
-            .collect::<Row>()
-    });
-
-    let t = Table::new(rows, app.table_columns_constraints.clone())
-        .header(header)
-        .row_highlight_style(selected_style)
-        .highlight_symbol(Text::from(vec![
-            "".into(),
-            bar.into(),
-            bar.into(),
-            "".into(),
-        ]))
-        .highlight_spacing(HighlightSpacing::Always)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::new().fg(app.palette.c400))
-                .border_type(BorderType::Rounded),
-        );
-
-    f.render_stateful_widget(t, area, &mut app.table_state_containers);
-}
-
 fn render_footer(f: &mut Frame, app: &mut App, area: Rect) {
-    let info_footer = Paragraph::new(Line::from(INFO_TEXT)).centered().block(
+    let info: String =
+        "CURRENT_STATE: ".to_string() + &app.active_state.to_string().as_str() + " | " + INFO_TEXT;
+
+    let mut text = Text::default();
+    text.extend(vec![Line::from(info.as_str())]);
+
+    let info_footer = Paragraph::new(text).centered().block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::new().fg(app.palette.c400))

@@ -178,9 +178,8 @@ impl Host {
         let pattern_check_pass =
             "ssh -o BatchMode=yes \"{{{name}}}\" \"exit\" 2>/dev/null && echo true || exit 1";
 
-        let pattern_password =
-            "sshpass -p \"{{{password}}}\" ssh \"{{{name}}}\" ".to_string() + command;
-        let pattern_name = "ssh \"{{{name}}}\" ".to_string() + command;
+        let pattern_password = "sshpass -p \"{{{password}}}\" ssh -o ConnectTimeout=5 \"{{{name}}}\" ".to_string() + command;
+        let pattern_name = "ssh -o ConnectTimeout=5 \"{{{name}}}\" ".to_string() + command;
 
         let need_passoword_to_connect = self.run_command_template_safe(pattern_check_pass);
 
@@ -246,7 +245,9 @@ impl Host {
             .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .output();
+            .spawn()
+            .map_err(|e| anyhow!("Failed to spawn command: {}", e))?
+            .wait_with_output();
 
         if status.is_err() {
             Err(anyhow!("Failed to run command: {rendered_command}"))

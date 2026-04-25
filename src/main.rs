@@ -18,7 +18,7 @@ struct Args {
         long,
         num_args = 1..,
         default_values_t = [
-            "~/.ssh/config".to_string(),
+            "/etc/ssh/ssh_config".to_string(),
         ],
     )]
     config: Vec<String>,
