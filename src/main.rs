@@ -3,6 +3,7 @@ pub mod ssh;
 pub mod ssh_config;
 pub mod ui;
 mod keychain;
+mod docker_containers;
 
 use anyhow::Result;
 use clap::Parser;
@@ -17,7 +18,6 @@ struct Args {
         long,
         num_args = 1..,
         default_values_t = [
-            "/etc/ssh/ssh_config".to_string(),
             "~/.ssh/config".to_string(),
         ],
     )]

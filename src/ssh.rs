@@ -11,7 +11,7 @@ use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use strum_macros::Display;
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, Hash, PartialEq, Eq)]
 pub struct Host {
     pub name: String,
     pub aliases: String,
@@ -61,11 +61,13 @@ impl Host {
             .collect::<VecDeque<String>>();
         let command = args.pop_front().ok_or(anyhow!("Failed to get command"))?;
 
-        let status = Command::new(command).args(args)
-            .stdout(Stdio::null()) 
-            .stderr(Stdio::null()) 
-            .spawn()?.wait()?;
-        
+        let status = Command::new(command)
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?
+            .wait()?;
+
         if !status.success() {
             return Err(anyhow!("Error"));
         }
@@ -138,19 +140,13 @@ impl Host {
         match passord {
             None => {
                 let handlebars = Handlebars::new();
-                rendered_command = handlebars.render_template(
-                    pattern_name,
-                    &self,
-                )?;
+                rendered_command = handlebars.render_template(pattern_name, &self)?;
             }
             Some(pwd) => {
                 let handlebars = Handlebars::new();
-                
+
                 if pwd == "-1" {
-                    rendered_command = handlebars.render_template(
-                        pattern_password,
-                        &self
-                    )?
+                    rendered_command = handlebars.render_template(pattern_password, &self)?
                 } else {
                     rendered_command = handlebars.render_template(
                         pattern_password,
@@ -176,6 +172,88 @@ impl Host {
         }
 
         Ok(())
+    }
+
+    pub fn run_command_template_on_ssh(&self, command: &str) -> anyhow::Result<String> {
+        let pattern_check_pass =
+            "ssh -o BatchMode=yes \"{{{name}}}\" \"exit\" 2>/dev/null && echo true || exit 1";
+
+        let pattern_password =
+            "sshpass -p \"{{{password}}}\" ssh \"{{{name}}}\" ".to_string() + command;
+        let pattern_name = "ssh \"{{{name}}}\" ".to_string() + command;
+
+        let need_passoword_to_connect = self.run_command_template_safe(pattern_check_pass);
+
+        let passord: Option<String> = if need_passoword_to_connect.is_err() {
+            if self.password.is_some() {
+                Some("-1".to_string())
+            } else {
+                match retrieve_from_keychain(self.name.as_str()) {
+                    Ok(pwd) => Some(pwd.to_string()),
+                    Err(_) => {
+                        let pwd_for_store = ask_user("Enter password to store in keychain: ");
+                        if pwd_for_store.is_err() {
+                            return Err(anyhow!(
+                                "Failed to save password to keychain: {}",
+                                pwd_for_store.unwrap_err()
+                            ));
+                        };
+                        let pwd_parsed = &pwd_for_store.unwrap();
+                        if let Err(e) = store_in_keychain(self.name.as_str(), pwd_parsed.as_str()) {
+                            eprintln!("Warning: failed to save password to keychain: {}", e);
+                            return Err(anyhow!("Failed to save password to keychain: {}", e));
+                        }
+
+                        Some(pwd_parsed.to_string())
+                    }
+                }
+            }
+        } else {
+            None
+        };
+
+        let alias = self.name.to_string();
+        let rendered_command;
+        match passord {
+            None => {
+                let handlebars = Handlebars::new();
+                rendered_command = handlebars.render_template(&pattern_name, &self)?;
+            }
+            Some(pwd) => {
+                let handlebars = Handlebars::new();
+
+                if pwd == "-1" {
+                    rendered_command = handlebars.render_template(&pattern_password, &self)?
+                } else {
+                    rendered_command = handlebars.render_template(
+                        &pattern_password,
+                        &SshConnection {
+                            name: alias,
+                            password: pwd,
+                        },
+                    )?
+                };
+            }
+        };
+        // println!("Running command: {rendered_command}");
+        let mut args = shlex::split(&rendered_command)
+            .ok_or(anyhow!("Failed to parse command: {rendered_command}"))?
+            .into_iter()
+            .collect::<VecDeque<String>>();
+        let command = args.pop_front().ok_or(anyhow!("Failed to get command"))?;
+
+        let status = Command::new(command)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output();
+
+        if status.is_err() {
+            Err(anyhow!("Failed to run command: {rendered_command}"))
+        } else {
+            let buf = String::from_utf8(status.unwrap().stdout).unwrap();
+            Ok(buf)
+        }
     }
 }
 
